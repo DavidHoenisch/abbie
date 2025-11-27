@@ -1,0 +1,33 @@
+# Repository configuration
+# Note: .ko.yaml doesn't support setting KO_DOCKER_REPO directly
+# You need to either:
+# 1. Set environment variable: export KO_DOCKER_REPO=ko.local
+# 2. Use the --local flag: ko build --local
+# 3. Add to your shell profile for persistence
+
+defaultBaseImage: cgr.dev/chainguard/static:latest
+defaultPlatforms:
+- linux/arm64
+- linux/amd64
+
+builds:
+- id: abbie
+  main: .
+  env:
+  - CGO_ENABLED=0
+  flags:
+  - -trimpath
+  ldflags:
+  - -s -w
+
+# Container port configuration
+ports:
+- name: http
+  containerPort: 8080
+  protocol: TCP
+
+# Optional: specify labels for the container image
+labels:
+  org.opencontainers.image.source: https://github.com/DavidHoenisch/abbie
+  org.opencontainers.image.description: A/B testing reverse proxy router
+  org.opencontainers.image.licenses: MIT
