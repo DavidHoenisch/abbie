@@ -5,14 +5,12 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"sync"
 
 	"github.com/DavidHoenisch/abbie/internal/config"
 )
 
 var (
 	settings *config.Config
-	once     *sync.Once
 )
 
 func newProxy(target string) *httputil.ReverseProxy {
@@ -22,10 +20,12 @@ func newProxy(target string) *httputil.ReverseProxy {
 
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
+		originalHost := req.Host
 		originalDirector(req)
 
 		req.Host = url.Host
-		originalHost := req.Host
+
+		log.Printf("Proxying request to: %s%s", url.String(), req.URL.Path)
 
 		if _, ok := req.Header["User-Agent"]; !ok {
 			// explicitly disable User-Agent so it's not set to default Go-http-client
@@ -46,23 +46,20 @@ func newProxy(target string) *httputil.ReverseProxy {
 	}
 
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		log.Printf("Proxy error: %v", err)
+		log.Printf("Proxy error for %s: %v", url.String(), err)
 		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte("Backend service unavailable"))
 	}
 
 	return proxy
 }
 
 func main() {
-	if settings == nil {
-		once.Do(func() {
-			settings = config.NewConfigFactory()
-		})
-	}
+	settings = config.NewConfigFactory()
 
 	// Using Fly.io internal addresses
 	proxyA := newProxy("http://landing-page-a.internal:3000")
-	proxyB := newProxy("http://landing-page-b.internal:3000")
+	proxyB := newProxy("http://localhost:5173")
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// (Insert your cookie logic here...)

@@ -12,7 +12,7 @@ defaultPlatforms:
 
 builds:
 - id: abbie
-  main: .
+  main: ./cmd/api
   env:
   - CGO_ENABLED=0
   flags:
