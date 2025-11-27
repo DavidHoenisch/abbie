@@ -1,0 +1,159 @@
+# GoReleaser configuration for Abbie
+# https://goreleaser.com
+
+version: 2
+
+before:
+  hooks:
+    # Ensure dependencies are up to date
+    - go mod tidy
+
+builds:
+  - id: abbie
+    main: ./cmd/api
+    binary: abbie
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - "7"
+    # Ignore unsupported combinations
+    ignore:
+      - goos: windows
+        goarch: arm
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+    flags:
+      - -trimpath
+
+archives:
+  - id: abbie
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE*
+      - README*
+      - config.example.yaml
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - '^chore:'
+      - 'README'
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: 'Bug fixes'
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: 'Performance improvements'
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: Others
+      order: 999
+
+release:
+  github:
+    owner: DavidHoenisch
+    name: abbie
+  draft: false
+  prerelease: auto
+  mode: append
+  header: |
+    ## Abbie {{ .Tag }} ({{ .Date }})
+
+    A lightweight A/B testing reverse proxy built in Go.
+
+    ### Installation
+
+    Download the appropriate binary for your platform below, extract it, and run:
+
+    ```bash
+    ./abbie -config config.yaml
+    ```
+
+    See the [README](https://github.com/DavidHoenisch/abbie) for configuration details.
+  footer: |
+    **Full Changelog**: https://github.com/DavidHoenisch/abbie/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+    ---
+
+    **Docker Images**: `docker pull ghcr.io/davidhoenisch/abbie:{{ .Tag }}`
+
+# Docker images
+dockers:
+  - image_templates:
+      - "ghcr.io/davidhoenisch/abbie:{{ .Tag }}-amd64"
+      - "ghcr.io/davidhoenisch/abbie:latest-amd64"
+    use: buildx
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source=https://github.com/DavidHoenisch/abbie"
+
+  - image_templates:
+      - "ghcr.io/davidhoenisch/abbie:{{ .Tag }}-arm64"
+      - "ghcr.io/davidhoenisch/abbie:latest-arm64"
+    use: buildx
+    dockerfile: Dockerfile
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source=https://github.com/DavidHoenisch/abbie"
+    goarch: arm64
+
+docker_manifests:
+  - name_template: ghcr.io/davidhoenisch/abbie:{{ .Tag }}
+    image_templates:
+      - ghcr.io/davidhoenisch/abbie:{{ .Tag }}-amd64
+      - ghcr.io/davidhoenisch/abbie:{{ .Tag }}-arm64
+
+  - name_template: ghcr.io/davidhoenisch/abbie:latest
+    image_templates:
+      - ghcr.io/davidhoenisch/abbie:latest-amd64
+      - ghcr.io/davidhoenisch/abbie:latest-arm64
+
+announce:
+  skip: true
