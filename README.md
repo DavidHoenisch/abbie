@@ -29,6 +29,43 @@ Abbie acts as a reverse proxy that routes incoming HTTP requests to different ba
       └─────────► Landing Page B (Group B)
 ```
 
+## Installation
+
+### Download Pre-built Binary
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/DavidHoenisch/abbie/releases):
+
+```bash
+# Example for Linux AMD64
+wget https://github.com/DavidHoenisch/abbie/releases/latest/download/abbie_Linux_x86_64.tar.gz
+tar -xzf abbie_Linux_x86_64.tar.gz
+chmod +x abbie
+
+# Run it
+./abbie -config config.yaml
+```
+
+### Docker
+
+```bash
+# Pull from GitHub Container Registry
+docker pull ghcr.io/davidhoenisch/abbie:latest
+
+# Run with your config
+docker run -d -p 8080:8080 \
+  -v $(pwd)/config.yaml:/etc/abbie/config.yaml \
+  ghcr.io/davidhoenisch/abbie:latest
+```
+
+### Build from Source
+
+```bash
+git clone https://github.com/DavidHoenisch/abbie.git
+cd abbie
+go build ./cmd/api
+./api -config config.yaml
+```
+
 ## Quick Start
 
 ### Local Development
@@ -372,6 +409,43 @@ This project uses [ko](https://ko.build/) for building container images:
 - **Static Binary**: No runtime dependencies
 - **Non-root**: Runs as non-root user
 - **SBOM**: Automatic software bill of materials generation
+
+## Releases
+
+### Creating a New Release
+
+Abbie uses [GoReleaser](https://goreleaser.com/) with GitHub Actions for automated releases.
+
+**To create a new release:**
+
+```bash
+# Tag your commit with semantic versioning
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
+```
+
+This will automatically:
+- Build binaries for Linux, macOS, and Windows (AMD64, ARM64, ARM)
+- Generate changelog from commit messages
+- Create a GitHub Release with all artifacts
+
+**Available artifacts:**
+- Pre-compiled binaries (tar.gz/zip)
+- Checksums (SHA256)
+
+### CI/CD
+
+The project includes two GitHub Actions workflows:
+
+**CI Workflow** (`.github/workflows/ci.yml`)
+- Runs on every push and PR
+- Executes tests, linting, and builds
+- Ensures code quality
+
+**Release Workflow** (`.github/workflows/release.yml`)
+- Triggers on tag push (v*)
+- Builds and publishes release artifacts
+- Pushes Docker images to GHCR
 
 ## License
 
