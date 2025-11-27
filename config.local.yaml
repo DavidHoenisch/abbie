@@ -1,0 +1,12 @@
+# Local development configuration
+app:
+  port: "8080"
+backends:
+  - name: local-dev
+    host: localhost
+    port: 5173
+    groups:
+      - development
+      - default
+routing:
+  strategy: static

@@ -1,0 +1,31 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+api
+*.exe
+*.test
+*.prof
+
+# Config files (will be mounted at runtime)
+config.yaml
+config.*.yaml
+
+# Documentation
+README.md
+*.md
+
+# Ko config
+.ko.yaml
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# CI/CD
+.github
+.claude

@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  abbie:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.yaml:/etc/abbie/config.yaml
+    restart: unless-stopped
+    # Optional: override command with custom args
+    # command: ["-config", "/etc/abbie/config.yaml", "-port", "8080"]
+
+  # Example: Local development setup
+  abbie-dev:
+    build: .
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./config.local.yaml:/etc/abbie/config.yaml
+    restart: unless-stopped
+    profiles:
+      - dev

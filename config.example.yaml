@@ -1,0 +1,152 @@
+# Abbie Configuration Examples
+# Copy this file to config.yaml and customize for your needs
+
+# ==============================================================================
+# Example 1: Query Parameter Based Routing
+# Routes requests based on ?audience=defense or ?audience=healthcare
+# ==============================================================================
+app:
+  port: "8080"
+
+backends:
+  - name: defense-backend
+    host: landing-page-a.internal
+    port: 3000
+    groups:
+      - defense
+      - government
+
+  - name: healthcare-backend
+    host: landing-page-b.internal
+    port: 3000
+    groups:
+      - healthcare
+      - medical
+
+routing:
+  strategy: query-param
+  param_name: audience
+  default_group: defense
+
+# Usage:
+# http://localhost:8080/?audience=defense    -> defense-backend
+# http://localhost:8080/?audience=healthcare -> healthcare-backend
+# http://localhost:8080/                     -> defense-backend (default)
+
+# ==============================================================================
+# Example 2: Round-Robin Load Balancing
+# Distributes requests evenly across all backends
+# ==============================================================================
+# app:
+#   port: "8080"
+#
+# backends:
+#   - name: backend-1
+#     host: localhost
+#     port: 3001
+#     groups: []
+#
+#   - name: backend-2
+#     host: localhost
+#     port: 3002
+#     groups: []
+#
+#   - name: backend-3
+#     host: localhost
+#     port: 3003
+#     groups: []
+#
+# routing:
+#   strategy: round-robin
+#   # param_name not needed for round-robin
+#   # default_group not needed for round-robin
+
+# ==============================================================================
+# Example 3: Header-Based Routing
+# Routes based on custom header like X-Customer-Type
+# ==============================================================================
+# app:
+#   port: "8080"
+#
+# backends:
+#   - name: enterprise-backend
+#     host: enterprise.internal
+#     port: 8080
+#     groups:
+#       - enterprise
+#       - premium
+#
+#   - name: standard-backend
+#     host: standard.internal
+#     port: 8080
+#     groups:
+#       - standard
+#       - free
+#
+# routing:
+#   strategy: header
+#   param_name: X-Customer-Type
+#   default_group: standard
+
+# Usage:
+# curl -H "X-Customer-Type: enterprise" http://localhost:8080/ -> enterprise-backend
+# curl -H "X-Customer-Type: standard" http://localhost:8080/   -> standard-backend
+
+# ==============================================================================
+# Example 4: Cookie-Based Routing (A/B Testing)
+# Routes based on cookie value
+# ==============================================================================
+# app:
+#   port: "8080"
+#
+# backends:
+#   - name: variant-a
+#     host: localhost
+#     port: 5173
+#     groups:
+#       - A
+#
+#   - name: variant-b
+#     host: localhost
+#     port: 5174
+#     groups:
+#       - B
+#
+# routing:
+#   strategy: cookie
+#   param_name: ab_test_group
+#   default_group: A
+
+# Usage: Set cookie ab_test_group=A or ab_test_group=B
+
+# ==============================================================================
+# Example 5: Static Routing (Single Backend)
+# Always routes to the first configured backend
+# ==============================================================================
+# app:
+#   port: "8080"
+#
+# backends:
+#   - name: main-backend
+#     host: localhost
+#     port: 3000
+#     groups: []
+#
+# routing:
+#   strategy: static
+
+# ==============================================================================
+# Example 6: Local Development Setup
+# ==============================================================================
+# app:
+#   port: "8080"
+#
+# backends:
+#   - name: local-dev
+#     host: localhost
+#     port: 5173
+#     groups:
+#       - development
+#
+# routing:
+#   strategy: static

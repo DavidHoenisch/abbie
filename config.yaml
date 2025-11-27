@@ -1,0 +1,40 @@
+# Abbie Configuration File
+# This is the main configuration for the Abbie reverse proxy
+
+app:
+  port: "8080"
+
+# Backend services configuration
+backends:
+  - name: defense-backend
+    host: landing-page-a.internal
+    port: 3000
+    groups:
+      - defense
+      - government
+
+  - name: healthcare-backend
+    host: landing-page-b.internal
+    port: 3000
+    groups:
+      - healthcare
+      - medical
+
+  - name: default-backend
+    host: landing-page-default.internal
+    port: 3000
+    groups:
+      - default
+
+# Routing configuration
+routing:
+  # Strategy options: round-robin, query-param, header, cookie, static
+  strategy: query-param
+
+  # For query-param strategy: the query parameter name to check
+  # For header strategy: the header name to check
+  # For cookie strategy: the cookie name to check
+  param_name: audience
+
+  # Default group to route to when no match is found
+  default_group: default

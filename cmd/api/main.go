@@ -1,16 +1,21 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 
 	"github.com/DavidHoenisch/abbie/internal/config"
+	"github.com/DavidHoenisch/abbie/internal/router"
 )
 
 var (
-	settings *config.Config
+	settings  *config.Config
+	appRouter *router.Router
+	proxies   map[string]*httputil.ReverseProxy
 )
 
 func newProxy(target string) *httputil.ReverseProxy {
@@ -55,23 +60,62 @@ func newProxy(target string) *httputil.ReverseProxy {
 }
 
 func main() {
-	settings = config.NewConfigFactory()
+	// Parse CLI flags
+	configPath := flag.String("config", "", "Path to config file (defaults to config.yaml, can also use ABBIE_CONFIG env var)")
+	port := flag.String("port", "", "Port to listen on (overrides config file, can also use ABBIE_PORT env var)")
+	flag.Parse()
 
-	// Using Fly.io internal addresses
-	proxyA := newProxy("http://landing-page-a.internal:3000")
-	proxyB := newProxy("http://localhost:5173")
+	// Set config path from flag if provided
+	if *configPath != "" {
+		os.Setenv("ABBIE_CONFIG", *configPath)
+	}
 
+	// Set port from flag if provided
+	if *port != "" {
+		os.Setenv("ABBIE_PORT", *port)
+	}
+
+	// Load configuration
+	var err error
+	settings, err = config.NewConfigFactory()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
+	// Initialize router
+	appRouter = router.NewRouter(settings)
+
+	// Create proxies for all configured backends
+	proxies = make(map[string]*httputil.ReverseProxy)
+	for _, backend := range settings.Backends {
+		backendURL := appRouter.GetBackendURL(&backend)
+		proxies[backend.Name] = newProxy(backendURL)
+		log.Printf("Configured backend: %s -> %s (groups: %v)", backend.Name, backendURL, backend.Groups)
+	}
+
+	// Main request handler
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// (Insert your cookie logic here...)
-		group := "B" // hardcoded for brevity
-
-		if group == "B" {
-			proxyB.ServeHTTP(w, r)
-		} else {
-			proxyA.ServeHTTP(w, r)
+		// Select backend based on routing strategy
+		backend, err := appRouter.SelectBackend(r)
+		if err != nil {
+			log.Printf("Error selecting backend: %v", err)
+			http.Error(w, "No backends available", http.StatusServiceUnavailable)
+			return
 		}
+
+		// Get the proxy for the selected backend
+		proxy, ok := proxies[backend.Name]
+		if !ok {
+			log.Printf("Proxy not found for backend: %s", backend.Name)
+			http.Error(w, "Backend configuration error", http.StatusInternalServerError)
+			return
+		}
+
+		log.Printf("Routing request to backend: %s", backend.Name)
+		proxy.ServeHTTP(w, r)
 	})
 
 	log.Printf("Router listening on %s", settings.App.Port)
+	log.Printf("Routing strategy: %s", settings.Routing.Strategy)
 	log.Fatal(http.ListenAndServe(":"+settings.App.Port, nil))
 }

@@ -34,58 +34,176 @@ Abbie acts as a reverse proxy that routes incoming HTTP requests to different ba
 ### Local Development
 
 ```bash
-# Set the port (optional, defaults to 8080)
-export ABBIE_PORT=8080
+# Run with a config file (required)
+go run cmd/api/main.go -config config.yaml
 
-# Run directly
-go run cmd/api/main.go
+# Or specify custom config and port
+go run cmd/api/main.go -config config.local.yaml -port 9090
+
+# Or use environment variables
+ABBIE_CONFIG=config.yaml ABBIE_PORT=8080 go run cmd/api/main.go
+
+# Show help
+go run cmd/api/main.go -h
 ```
 
-### Build with ko
+### Build with Docker
 
 ```bash
-# Build locally
+# Build the image
+docker build -t abbie:latest .
+
+# Run with default config location
+docker run -d -p 8080:8080 \
+  -v $(pwd)/config.yaml:/etc/abbie/config.yaml \
+  abbie:latest
+
+# Run with custom config path and port
+docker run -d -p 9000:9000 \
+  -v $(pwd)/config.yaml:/app/config.yaml \
+  abbie:latest -config /app/config.yaml -port 9000
+
+# Run for local development
+docker run -d -p 8080:8080 \
+  -v $(pwd)/config.local.yaml:/etc/abbie/config.yaml \
+  abbie:latest
+```
+
+### Docker Compose (Easiest)
+
+```bash
+# Run production setup
+docker-compose up -d
+
+# Run development setup
+docker-compose --profile dev up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop
+docker-compose down
+```
+
+### Build with ko (Alternative)
+
+```bash
+# Build locally with ko
 ko build --local ./cmd/api
 
-# Run the container
-docker run -p 8080:8080 -e ABBIE_PORT=8080 ko.local/abbie:latest
-```
-
-### Build for Production
-
-```bash
-# Set your registry
-export KO_DOCKER_REPO=ghcr.io/yourusername
-
-# Build and push multi-arch images
-ko build --platform=linux/amd64,linux/arm64 ./cmd/api
+# Note: When using ko, you'll need to mount config at runtime
+docker run -p 8080:8080 \
+  -v $(pwd)/config.yaml:/etc/abbie/config.yaml \
+  ko.local/github.com/davidhoenisch/abbie/cmd/api:latest \
+  -config /etc/abbie/config.yaml
 ```
 
 ## Configuration
+
+Abbie requires a YAML configuration file for all routing and backend settings. The config can be provided in multiple ways:
+
+1. **CLI flag**: `-config /path/to/config.yaml` (recommended)
+2. **Environment variable**: `ABBIE_CONFIG=/path/to/config.yaml`
+3. **Default**: Looks for `config.yaml` in the current directory
+
+### Configuration File
+
+Create a `config.yaml` file in your project root (see `config.example.yaml` for examples):
+
+```yaml
+app:
+  port: "8080"
+
+backends:
+  - name: defense-backend
+    host: landing-page-a.internal
+    port: 3000
+    groups:
+      - defense
+      - government
+
+  - name: healthcare-backend
+    host: landing-page-b.internal
+    port: 3000
+    groups:
+      - healthcare
+      - medical
+
+routing:
+  strategy: query-param      # round-robin, query-param, header, cookie, static
+  param_name: audience       # query param/header/cookie name to check
+  default_group: defense     # fallback group when no match
+```
+
+### CLI Flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-config` | Path to config file | `config.yaml` |
+| `-port` | Port to listen on (overrides config file) | Uses config file value |
+| `-h` | Show help | - |
 
 ### Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ABBIE_PORT` | Port to listen on | `8080` |
+| `ABBIE_CONFIG` | Path to config file (overridden by `-config` flag) | `config.yaml` |
+| `ABBIE_PORT` | Port to listen on (overridden by `-port` flag) | `8080` |
 
-### Backend Configuration
+### Routing Strategies
 
-Edit `cmd/api/main.go` to configure your backend services:
-
-```go
-proxyA := newProxy("http://your-service-a:3000")
-proxyB := newProxy("http://your-service-b:3000")
+**Round-Robin**: Distributes requests evenly across all backends
+```yaml
+routing:
+  strategy: round-robin
 ```
 
-### A/B Group Logic
+**Query Parameter**: Routes based on query parameter (e.g., `?audience=defense`)
+```yaml
+routing:
+  strategy: query-param
+  param_name: audience
+  default_group: defense
+```
 
-Implement your group assignment logic in the main handler at `cmd/api/main.go:68`. Examples:
+**Header**: Routes based on request header (e.g., `X-Customer-Type: enterprise`)
+```yaml
+routing:
+  strategy: header
+  param_name: X-Customer-Type
+  default_group: standard
+```
 
-- Cookie-based assignment
-- Header-based routing
-- IP-based segmentation
-- Random distribution
+**Cookie**: Routes based on cookie value (e.g., A/B testing)
+```yaml
+routing:
+  strategy: cookie
+  param_name: ab_test_group
+  default_group: A
+```
+
+**Static**: Always routes to the first configured backend
+```yaml
+routing:
+  strategy: static
+```
+
+### Backend Groups
+
+Backends can belong to multiple groups:
+
+```yaml
+backends:
+  - name: my-backend
+    host: example.com
+    port: 3000
+    groups:
+      - defense
+      - government
+      - premium
+```
+
+When a request comes in with `?audience=defense`, it will be routed to any backend that has `defense` in its groups.
 
 ## Project Structure
 
@@ -103,6 +221,40 @@ abbie/
 
 ## Deployment
 
+### Docker Deployment
+
+**Using the Dockerfile (recommended):**
+
+```bash
+# Build and tag
+docker build -t abbie:v1.0 .
+
+# Run with mounted config (default location)
+docker run -d -p 8080:8080 \
+  -v $(pwd)/config.yaml:/etc/abbie/config.yaml \
+  --name abbie \
+  abbie:v1.0
+
+# Run with custom config path and port override
+docker run -d -p 9000:9000 \
+  -v $(pwd)/config.yaml:/app/config.yaml \
+  --name abbie \
+  abbie:v1.0 -config /app/config.yaml -port 9000
+
+# View logs
+docker logs -f abbie
+```
+
+**Using environment variables:**
+
+```bash
+docker run -d -p 8080:8080 \
+  -v $(pwd)/config.yaml:/app/config.yaml \
+  -e ABBIE_CONFIG=/app/config.yaml \
+  -e ABBIE_PORT=8080 \
+  abbie:v1.0
+```
+
 ### Fly.io
 
 ```bash
@@ -110,8 +262,68 @@ abbie/
 fly deploy --image $(ko build ./cmd/api)
 ```
 
+Create a `fly.toml` with your config:
+```toml
+[env]
+  ABBIE_CONFIG = "/app/config.yaml"
+
+[files]
+  "config.yaml" = "/app/config.yaml"
+```
+
 ### Kubernetes
 
+**With ConfigMap for config file:**
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: abbie-config
+data:
+  config.yaml: |
+    app:
+      port: "8080"
+    backends:
+      - name: backend-1
+        host: service-1.default.svc.cluster.local
+        port: 8080
+        groups:
+          - default
+    routing:
+      strategy: round-robin
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: abbie
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: abbie
+  template:
+    metadata:
+      labels:
+        app: abbie
+    spec:
+      containers:
+      - name: abbie
+        image: ko://github.com/DavidHoenisch/abbie/cmd/api
+        ports:
+        - containerPort: 8080
+        env:
+        - name: ABBIE_CONFIG
+          value: "/etc/abbie/config.yaml"
+        volumeMounts:
+        - name: config
+          mountPath: /etc/abbie
+      volumes:
+      - name: config
+        configMap:
+          name: abbie-config
+```
+
+**Or use embedded default config (no ConfigMap needed):**
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
