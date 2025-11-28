@@ -55,18 +55,19 @@ func newProxy(target string, backendName string) *httputil.ReverseProxy {
 		contentType := resp.Header.Get("Content-Type")
 
 		// Add cache control headers for HTML, CSS, and JS to prevent cross-audience caching
-		if resp.StatusCode == http.StatusOK {
+		if resp.StatusCode == http.StatusOK && len(contentType) > 0 {
 			// For HTML pages, disable caching to ensure audience-specific content is always fresh
-			if len(contentType) > 0 && (contentType[:9] == "text/html" || contentType[:24] == "application/octet-stream") {
+			if (len(contentType) >= 9 && contentType[:9] == "text/html") ||
+				(len(contentType) >= 24 && contentType[:24] == "application/octet-stream") {
 				resp.Header.Set("Cache-Control", "no-cache, no-store, must-revalidate")
 				resp.Header.Set("Pragma", "no-cache")
 				resp.Header.Set("Expires", "0")
 			}
 
 			// For CSS and JS files, add Vary header based on backend to create separate cache buckets
-			if len(contentType) > 0 && (contentType[:8] == "text/css" ||
-				contentType[:15] == "text/javascript" ||
-				contentType[:22] == "application/javascript") {
+			if (len(contentType) >= 8 && contentType[:8] == "text/css") ||
+				(len(contentType) >= 15 && contentType[:15] == "text/javascript") ||
+				(len(contentType) >= 22 && contentType[:22] == "application/javascript") {
 				// Add custom header to identify which backend served this asset
 				resp.Header.Set("X-Backend-Name", backendName)
 				// Use Vary header to tell browsers to cache separately per backend
