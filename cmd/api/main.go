@@ -18,7 +18,7 @@ var (
 	proxies   map[string]*httputil.ReverseProxy
 )
 
-func newProxy(target string) *httputil.ReverseProxy {
+func newProxy(target string, backendName string) *httputil.ReverseProxy {
 	url, _ := url.Parse(target)
 
 	proxy := httputil.NewSingleHostReverseProxy(url)
@@ -48,6 +48,38 @@ func newProxy(target string) *httputil.ReverseProxy {
 				req.Header.Set("X-Forwarded-Proto", "http")
 			}
 		}
+	}
+
+	// Add response modifier for cache busting
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		contentType := resp.Header.Get("Content-Type")
+
+		// Add cache control headers for HTML, CSS, and JS to prevent cross-audience caching
+		if resp.StatusCode == http.StatusOK {
+			// For HTML pages, disable caching to ensure audience-specific content is always fresh
+			if len(contentType) > 0 && (contentType[:9] == "text/html" || contentType[:24] == "application/octet-stream") {
+				resp.Header.Set("Cache-Control", "no-cache, no-store, must-revalidate")
+				resp.Header.Set("Pragma", "no-cache")
+				resp.Header.Set("Expires", "0")
+			}
+
+			// For CSS and JS files, add Vary header based on backend to create separate cache buckets
+			if len(contentType) > 0 && (contentType[:8] == "text/css" ||
+				contentType[:15] == "text/javascript" ||
+				contentType[:22] == "application/javascript") {
+				// Add custom header to identify which backend served this asset
+				resp.Header.Set("X-Backend-Name", backendName)
+				// Use Vary header to tell browsers to cache separately per backend
+				vary := resp.Header.Get("Vary")
+				if vary == "" {
+					resp.Header.Set("Vary", "X-Backend-Name")
+				} else {
+					resp.Header.Set("Vary", vary+", X-Backend-Name")
+				}
+			}
+		}
+
+		return nil
 	}
 
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
@@ -89,7 +121,7 @@ func main() {
 	proxies = make(map[string]*httputil.ReverseProxy)
 	for _, backend := range settings.Backends {
 		backendURL := appRouter.GetBackendURL(&backend)
-		proxies[backend.Name] = newProxy(backendURL)
+		proxies[backend.Name] = newProxy(backendURL, backend.Name)
 		log.Printf("Configured backend: %s -> %s (groups: %v)", backend.Name, backendURL, backend.Groups)
 	}
 
