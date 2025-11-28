@@ -5,14 +5,14 @@ A lightweight, high-performance A/B testing reverse proxy built in Go. Routes tr
 ## Features
 
 - **Zero Dependencies**: Pure Go stdlib implementation
-- **Minimal Footprint**: Compiled to a static binary (~5MB)
-- **Multi-Architecture**: Supports ARM64 and AMD64
+- **Minimal Footprint**: Compiled to a static binary (~9MB)
+- **Multi-Architecture**: Supports ARM64, AMD64, and ARM via ko build
 - **Production Ready**: Proper error handling and logging
-- **Distroless Base**: Built on Chainguard static image for minimal attack surface
+- **Flexible Base Images**: Alpine (Dockerfile) or Chainguard static (ko) for minimal attack surface
 
 ## How It Works
 
-Abbie acts as a reverse proxy that routes incoming HTTP requests to different backend services based on A/B test groups. Currently configured for Fly.io internal networking, but adaptable to any environment.
+Abbie acts as a reverse proxy that routes incoming HTTP requests to different backend services based on A/B test groups. Designed for any environment where you need dynamic traffic routing based on user attributes.
 
 ```
 ┌─────────┐
@@ -47,14 +47,16 @@ chmod +x abbie
 
 ### Docker
 
+Build locally with the included Dockerfile:
+
 ```bash
-# Pull from GitHub Container Registry
-docker pull ghcr.io/davidhoenisch/abbie:latest
+# Build the image
+docker build -t abbie:latest .
 
 # Run with your config
 docker run -d -p 8080:8080 \
   -v $(pwd)/config.yaml:/etc/abbie/config.yaml \
-  ghcr.io/davidhoenisch/abbie:latest
+  abbie:latest
 ```
 
 ### Build from Source
@@ -153,14 +155,14 @@ app:
 
 backends:
   - name: defense-backend
-    host: landing-page-a.internal
+    host: backend-a.example.com
     port: 3000
     groups:
       - defense
       - government
 
   - name: healthcare-backend
-    host: landing-page-b.internal
+    host: backend-b.example.com
     port: 3000
     groups:
       - healthcare
@@ -250,9 +252,16 @@ abbie/
 │   └── api/
 │       └── main.go          # Application entry point
 ├── internal/
-│   └── config/
-│       └── settings.go      # Configuration management
+│   ├── config/
+│   │   └── settings.go      # Configuration management
+│   └── router/
+│       └── router.go        # Request routing logic
+├── .github/
+│   └── workflows/           # CI/CD pipelines
 ├── .ko.yaml                 # ko build configuration
+├── Dockerfile               # Docker build configuration
+├── docker-compose.yml       # Docker Compose setup
+├── .goreleaser.yml          # GoReleaser configuration
 └── README.md
 ```
 
@@ -295,17 +304,30 @@ docker run -d -p 8080:8080 \
 ### Fly.io
 
 ```bash
-# Deploy using ko
+# Deploy using Dockerfile
+fly deploy
+
+# Or deploy using ko
 fly deploy --image $(ko build ./cmd/api)
 ```
 
-Create a `fly.toml` with your config:
+Create a `fly.toml` with your config (using files section to mount config):
 ```toml
-[env]
-  ABBIE_CONFIG = "/app/config.yaml"
+app = "your-app-name"
 
-[files]
-  "config.yaml" = "/app/config.yaml"
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  ABBIE_CONFIG = "/etc/abbie/config.yaml"
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+
+[[services.ports]]
+  handlers = ["http"]
+  port = 80
 ```
 
 ### Kubernetes
@@ -360,55 +382,42 @@ spec:
           name: abbie-config
 ```
 
-**Or use embedded default config (no ConfigMap needed):**
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: abbie
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: abbie
-  template:
-    metadata:
-      labels:
-        app: abbie
-    spec:
-      containers:
-      - name: abbie
-        image: ko://github.com/DavidHoenisch/abbie/cmd/api
-        ports:
-        - containerPort: 8080
-        env:
-        - name: ABBIE_PORT
-          value: "8080"
-```
 
-## Why ko?
+## Build Options
 
-This project uses [ko](https://ko.build/) for building container images:
+This project supports two build methods:
 
-- No Dockerfile needed
-- Automatic multi-architecture builds
-- Minimal base images (distroless)
+### Docker (Traditional)
+- Uses multi-stage build with Alpine base
+- Good for familiar Docker workflows
+- ~15MB final image size
+- Standard Docker tooling
+
+### ko (Advanced)
+Uses [ko](https://ko.build/) for optimized container builds:
+- Minimal base images (Chainguard static)
+- Automatic multi-architecture builds (ARM64, AMD64, ARM)
 - Fast, reproducible builds
 - Built-in SBOM generation
+- ~10MB final image size
 
 ## Performance
 
-- **Binary Size**: ~5MB static binary
-- **Image Size**: ~10MB total (with Chainguard static base)
+- **Binary Size**: ~9MB static binary (uncompressed)
+- **Docker Image Size**:
+  - Alpine (Dockerfile): ~15MB
+  - Chainguard static (ko): ~10MB
 - **Memory**: <10MB RSS under normal load
 - **Latency**: <1ms routing overhead
 
 ## Security
 
-- **Distroless Base**: No shell, no package manager, minimal attack surface
-- **Static Binary**: No runtime dependencies
-- **Non-root**: Runs as non-root user
-- **SBOM**: Automatic software bill of materials generation
+- **Minimal Base Images**:
+  - Alpine: Small, security-focused Linux distribution
+  - Chainguard static (ko): Distroless with no shell or package manager
+- **Static Binary**: No runtime dependencies, compiled with Go 1.24
+- **SBOM**: Automatic software bill of materials generation (via ko)
+- **Multi-layer Security**: HTTPS support for proxied backends
 
 ## Releases
 
@@ -430,22 +439,26 @@ This will automatically:
 - Create a GitHub Release with all artifacts
 
 **Available artifacts:**
-- Pre-compiled binaries (tar.gz/zip)
+- Pre-compiled binaries for Linux, macOS, Windows (AMD64, ARM64, ARM)
 - Checksums (SHA256)
+- Automatically generated changelog
 
 ### CI/CD
 
 The project includes two GitHub Actions workflows:
 
 **CI Workflow** (`.github/workflows/ci.yml`)
-- Runs on every push and PR
-- Executes tests, linting, and builds
-- Ensures code quality
+- Runs on every push to master/main and all PRs
+- Executes tests with race detection and coverage
+- Runs go vet and gofmt checks
+- Runs golangci-lint for comprehensive linting
+- Ensures code quality and build success
 
 **Release Workflow** (`.github/workflows/release.yml`)
 - Triggers on tag push (v*)
-- Builds and publishes release artifacts
-- Pushes Docker images to GHCR
+- Uses GoReleaser to build multi-platform binaries
+- Creates GitHub Release with binaries and changelog
+- Automatically generates checksums
 
 ## License
 
