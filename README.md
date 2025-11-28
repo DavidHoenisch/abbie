@@ -4,7 +4,6 @@ A lightweight, high-performance A/B testing reverse proxy built in Go. Routes tr
 
 ## Features
 
-- **Zero Dependencies**: Pure Go stdlib implementation
 - **Minimal Footprint**: Compiled to a static binary (~9MB)
 - **Multi-Architecture**: Supports ARM64, AMD64, and ARM via ko build
 - **Production Ready**: Proper error handling and logging
