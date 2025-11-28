@@ -49,9 +49,18 @@ func (r *Router) selectRoundRobin() *config.Backend {
 	return &r.config.Backends[idx%uint64(len(r.config.Backends))]
 }
 
-// selectByQueryParam routes based on a query parameter
+// selectByQueryParam routes based on a query parameter, with cookie fallback
 func (r *Router) selectByQueryParam(req *http.Request) *config.Backend {
 	paramValue := req.URL.Query().Get(r.config.Routing.ParamName)
+
+	// If no query param is present, check for a cookie with the same name
+	if paramValue == "" {
+		cookie, err := req.Cookie(r.config.Routing.ParamName)
+		if err == nil {
+			paramValue = cookie.Value
+		}
+	}
+
 	return r.findBackendByGroup(paramValue)
 }
 

@@ -50,7 +50,7 @@ func newProxy(target string, backendName string) *httputil.ReverseProxy {
 		}
 	}
 
-	// Add response modifier for cache busting
+	// Add response modifier for cache busting and cookie management
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		contentType := resp.Header.Get("Content-Type")
 
@@ -128,6 +128,24 @@ func main() {
 
 	// Main request handler
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// If using query-param strategy and the param is present, set a cookie for future requests
+		if settings.Routing.Strategy == config.QueryParam {
+			paramValue := r.URL.Query().Get(settings.Routing.ParamName)
+			if paramValue != "" {
+				// Set cookie with the audience value to persist routing across asset requests
+				cookie := &http.Cookie{
+					Name:     settings.Routing.ParamName,
+					Value:    paramValue,
+					Path:     "/",
+					MaxAge:   3600, // 1 hour
+					HttpOnly: true,
+					SameSite: http.SameSiteLaxMode,
+				}
+				http.SetCookie(w, cookie)
+				log.Printf("Set cookie %s=%s for persistent routing", settings.Routing.ParamName, paramValue)
+			}
+		}
+
 		// Select backend based on routing strategy
 		backend, err := appRouter.SelectBackend(r)
 		if err != nil {
