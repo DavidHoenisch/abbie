@@ -57,7 +57,11 @@ func New(target string, backendName string) (*httputil.ReverseProxy, error) {
 	}
 
 	proxy.ModifyResponse = func(resp *http.Response) error {
-		return ApplyCacheAndVaryHeaders(resp, backendName)
+		if err := ApplyCacheAndVaryHeaders(resp, backendName); err != nil {
+			return err
+		}
+		appendStickyRoundRobinSetCookie(resp, backendName)
+		return nil
 	}
 
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {

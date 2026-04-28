@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httputil"
+	"strings"
 	"sync/atomic"
 
 	"github.com/DavidHoenisch/abbie/internal/config"
@@ -41,6 +42,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				MaxAge:   3600,
 				HttpOnly: true,
 				SameSite: http.SameSiteLaxMode,
+				Secure:   requestIsHTTPS(r),
 			}
 			http.SetCookie(w, cookie)
 			log.Printf("Set cookie %s=%s for persistent routing", rule.ParamName, paramValue)
@@ -62,17 +64,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if sel.StickyRoundRobinCookie != nil {
-			ck := *sel.StickyRoundRobinCookie
-			ck.Value = served
-			http.SetCookie(w, &ck)
-			log.Printf("Set sticky round-robin cookie %s=%s", ck.Name, ck.Value)
+			log.Printf("Sticky round-robin cookie issued via ModifyResponse %s=%s", sel.StickyRoundRobinCookie.Name, served)
 		}
 		return
-	}
-
-	if sel.StickyRoundRobinCookie != nil {
-		http.SetCookie(w, sel.StickyRoundRobinCookie)
-		log.Printf("Set sticky round-robin cookie %s=%s", sel.StickyRoundRobinCookie.Name, sel.StickyRoundRobinCookie.Value)
 	}
 
 	backend := sel.Backend
@@ -84,7 +78,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("Routing request to backend: %s", backend.Name)
-	p.ServeHTTP(w, r)
+	req := r
+	if sel.StickyRoundRobinCookie != nil {
+		secure := requestIsHTTPS(r)
+		req = req.WithContext(proxy.ContextWithStickyRoundRobin(r.Context(), &proxy.StickyRoundRobinMeta{
+			Name:   sel.StickyRoundRobinCookie.Name,
+			MaxAge: sel.StickyRoundRobinCookie.MaxAge,
+			Secure: secure,
+		}))
+	}
+	p.ServeHTTP(w, req)
 }
 
 func (s *Server) serveRoundRobinWithFallback(w http.ResponseWriter, r *http.Request, sel *router.Selection) (servedBackend string, ok bool) {
@@ -98,7 +101,14 @@ func (s *Server) serveRoundRobinWithFallback(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	for i := 0; i < len(pool); i++ {
+	canFallback := isBackendFallbackMethod(r.Method)
+	secure := requestIsHTTPS(r)
+	attempts := len(pool)
+	if !canFallback {
+		attempts = 1
+	}
+
+	for i := 0; i < attempts; i++ {
 		name := pool[(startIdx+i)%len(pool)]
 		p, found := s.Proxies[name]
 		if !found {
@@ -109,13 +119,47 @@ func (s *Server) serveRoundRobinWithFallback(w http.ResponseWriter, r *http.Requ
 		var retry atomic.Bool
 		ctx := proxy.ContextWithProxyRetry(r.Context(), &retry)
 		r2 := r.Clone(ctx)
+		if sel.StickyRoundRobinCookie != nil {
+			r2 = r2.WithContext(proxy.ContextWithStickyRoundRobin(r2.Context(), &proxy.StickyRoundRobinMeta{
+				Name:   sel.StickyRoundRobinCookie.Name,
+				MaxAge: sel.StickyRoundRobinCookie.MaxAge,
+				Secure: secure,
+			}))
+		}
 		log.Printf("Routing request to backend: %s", name)
 		p.ServeHTTP(w, r2)
 		if retry.Load() {
+			if !canFallback {
+				log.Printf("Round-robin fallback: not retrying %s request on another backend", r.Method)
+				return "", false
+			}
 			log.Printf("Round-robin fallback: backend %s unavailable, trying next", name)
 			continue
 		}
 		return name, true
 	}
 	return "", false
+}
+
+func requestIsHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	xfp := r.Header.Get("X-Forwarded-Proto")
+	if xfp == "" {
+		return false
+	}
+	if i := strings.IndexByte(xfp, ','); i >= 0 {
+		xfp = xfp[:i]
+	}
+	return strings.EqualFold(strings.TrimSpace(xfp), "https")
+}
+
+func isBackendFallbackMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		return true
+	default:
+		return false
+	}
 }
