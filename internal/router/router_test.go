@@ -59,12 +59,12 @@ func TestSelectBackend_unknownStrategy(t *testing.T) {
 
 func TestSelectBackend_static(t *testing.T) {
 	r := newTestRouter(t, sampleCfg(config.Static, ""))
-	b, err := r.SelectBackend(httptestReq(t, "GET", "/", nil))
+	sel, err := r.SelectBackend(httptestReq(t, "GET", "/", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Name != "b-def" {
-		t.Fatalf("backend: %+v", b)
+	if sel.Backend.Name != "b-def" {
+		t.Fatalf("backend: %+v", sel.Backend)
 	}
 }
 
@@ -83,13 +83,13 @@ func TestSelectBackend_roundRobin_targetsSubset(t *testing.T) {
 	r := newTestRouter(t, cfg)
 	seen := make(map[string]int)
 	for i := 0; i < 60; i++ {
-		b, err := r.SelectBackend(httptestReq(t, "GET", "/", nil))
+		sel, err := r.SelectBackend(httptestReq(t, "GET", "/", nil))
 		if err != nil {
 			t.Fatal(err)
 		}
-		seen[b.Name]++
-		if b.Name == "b-other" {
-			t.Fatalf("unexpected backend %s", b.Name)
+		seen[sel.Backend.Name]++
+		if sel.Backend.Name == "b-other" {
+			t.Fatalf("unexpected backend %s", sel.Backend.Name)
 		}
 	}
 	if seen["b-def"] == 0 || seen["b-health"] == 0 {
@@ -101,74 +101,164 @@ func TestSelectBackend_roundRobin(t *testing.T) {
 	r := newTestRouter(t, sampleCfg(config.RoundRobin, ""))
 	seen := make(map[string]int)
 	for i := 0; i < 20; i++ {
-		b, err := r.SelectBackend(httptestReq(t, "GET", "/", nil))
+		sel, err := r.SelectBackend(httptestReq(t, "GET", "/", nil))
 		if err != nil {
 			t.Fatal(err)
 		}
-		seen[b.Name]++
+		seen[sel.Backend.Name]++
 	}
 	if seen["b-def"] == 0 || seen["b-health"] == 0 {
 		t.Fatalf("expected rotation, got %+v", seen)
 	}
 }
 
-func TestSelectBackend_queryParam(t *testing.T) {
-	r := newTestRouter(t, sampleCfg(config.QueryParam, "aud"))
-	req := httptestReq(t, "GET", "/?aud=health", nil)
-	b, err := r.SelectBackend(req)
+func TestSelectBackend_roundRobin_sticky(t *testing.T) {
+	cfg := &config.Config{
+		App: config.App{Port: "8080"},
+		Routing: config.RoutingList{
+			{Strategy: config.RoundRobin, StickyCookie: "rr_host", StickyMaxAge: 60},
+		},
+		Backends: []config.Backend{
+			{Name: "b-def", Host: "h", Port: 1},
+			{Name: "b-health", Host: "h", Port: 2},
+		},
+	}
+	r := newTestRouter(t, cfg)
+
+	sel1, err := r.SelectBackend(httptestReq(t, "GET", "/", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Name != "b-health" {
-		t.Fatalf("got %+v", b)
+	if sel1.StickyRoundRobinCookie == nil || sel1.StickyRoundRobinCookie.Value != sel1.Backend.Name {
+		t.Fatalf("expected sticky cookie for new assign: %+v", sel1)
+	}
+	name := sel1.Backend.Name
+	for i := 0; i < 30; i++ {
+		req := httptestReq(t, "GET", "/", map[string]string{"Cookie": "rr_host=" + name})
+		sel, err := r.SelectBackend(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sel.Backend.Name != name {
+			t.Fatalf("sticky broke at %d: got %s want %s", i, sel.Backend.Name, name)
+		}
+		if sel.StickyRoundRobinCookie == nil || sel.StickyRoundRobinCookie.Value != name {
+			t.Fatal("expected cookie refresh")
+		}
+	}
+	seen := map[string]int{}
+	for i := 0; i < 100; i++ {
+		sel, err := r.SelectBackend(httptestReq(t, "GET", "/", nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen[sel.Backend.Name]++
+	}
+	if seen["b-def"] == 0 || seen["b-health"] == 0 {
+		t.Fatalf("expected global RR for new clients: %+v", seen)
+	}
+}
+
+func TestSelectBackend_roundRobin_sticky_invalidCookieUsesCounter(t *testing.T) {
+	cfg := &config.Config{
+		App: config.App{Port: "8080"},
+		Routing: config.RoutingList{
+			{Strategy: config.RoundRobin, StickyCookie: "rr", StickyMaxAge: 60},
+		},
+		Backends: []config.Backend{
+			{Name: "b-def", Host: "h", Port: 1},
+			{Name: "b-health", Host: "h", Port: 2},
+		},
+	}
+	r := newTestRouter(t, cfg)
+	req := httptestReq(t, "GET", "/", map[string]string{"Cookie": "rr=not-a-backend"})
+	sel, err := r.SelectBackend(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.Backend.Name != "b-def" && sel.Backend.Name != "b-health" {
+		t.Fatalf("backend: %s", sel.Backend.Name)
+	}
+}
+
+func TestSelectBackend_roundRobin_sticky_defaultMaxAge(t *testing.T) {
+	cfg := &config.Config{
+		App: config.App{Port: "8080"},
+		Routing: config.RoutingList{
+			{Strategy: config.RoundRobin, StickyCookie: "rr"},
+		},
+		Backends: []config.Backend{
+			{Name: "b-def", Host: "h", Port: 1},
+			{Name: "b-health", Host: "h", Port: 2},
+		},
+	}
+	r := newTestRouter(t, cfg)
+	sel, err := r.SelectBackend(httptestReq(t, "GET", "/", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.StickyRoundRobinCookie.MaxAge != 3600 {
+		t.Fatalf("default max age: %d", sel.StickyRoundRobinCookie.MaxAge)
+	}
+}
+
+func TestSelectBackend_queryParam(t *testing.T) {
+	r := newTestRouter(t, sampleCfg(config.QueryParam, "aud"))
+	req := httptestReq(t, "GET", "/?aud=health", nil)
+	sel, err := r.SelectBackend(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.Backend.Name != "b-health" {
+		t.Fatalf("got %+v", sel.Backend)
 	}
 }
 
 func TestSelectBackend_queryParam_cookieFallback(t *testing.T) {
 	r := newTestRouter(t, sampleCfg(config.QueryParam, "aud"))
 	req := httptestReq(t, "GET", "/", map[string]string{"Cookie": "aud=health"})
-	b, err := r.SelectBackend(req)
+	sel, err := r.SelectBackend(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Name != "b-health" {
-		t.Fatalf("got %+v", b)
+	if sel.Backend.Name != "b-health" {
+		t.Fatalf("got %+v", sel.Backend)
 	}
 }
 
 func TestSelectBackend_header(t *testing.T) {
 	r := newTestRouter(t, sampleCfg(config.Header, "X-A"))
 	req := httptestReq(t, "GET", "/", map[string]string{"X-A": "health"})
-	b, err := r.SelectBackend(req)
+	sel, err := r.SelectBackend(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Name != "b-health" {
-		t.Fatalf("got %+v", b)
+	if sel.Backend.Name != "b-health" {
+		t.Fatalf("got %+v", sel.Backend)
 	}
 }
 
 func TestSelectBackend_cookie(t *testing.T) {
 	r := newTestRouter(t, sampleCfg(config.Cookie, "ab"))
 	req := httptestReq(t, "GET", "/", map[string]string{"Cookie": "ab=health"})
-	b, err := r.SelectBackend(req)
+	sel, err := r.SelectBackend(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Name != "b-health" {
-		t.Fatalf("got %+v", b)
+	if sel.Backend.Name != "b-health" {
+		t.Fatalf("got %+v", sel.Backend)
 	}
 }
 
 func TestSelectBackend_cookie_missingUsesDefaultGroup(t *testing.T) {
 	r := newTestRouter(t, sampleCfg(config.Cookie, "missing"))
 	req := httptestReq(t, "GET", "/", nil)
-	b, err := r.SelectBackend(req)
+	sel, err := r.SelectBackend(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Name != "b-def" {
-		t.Fatalf("got %+v", b.Name)
+	if sel.Backend.Name != "b-def" {
+		t.Fatalf("got %+v", sel.Backend.Name)
 	}
 }
 
@@ -188,23 +278,23 @@ func TestSelectBackend_chain_queryThenRR(t *testing.T) {
 
 	seen := make(map[string]int)
 	for i := 0; i < 40; i++ {
-		b, err := r.SelectBackend(httptestReq(t, "GET", "/", nil))
+		sel, err := r.SelectBackend(httptestReq(t, "GET", "/", nil))
 		if err != nil {
 			t.Fatal(err)
 		}
-		seen[b.Name]++
+		seen[sel.Backend.Name]++
 	}
 	if seen["b-def"] == 0 || seen["b-health"] == 0 {
 		t.Fatalf("expected RR when query empty, got %+v", seen)
 	}
 
 	req := httptestReq(t, "GET", "/?aud=health", nil)
-	b, err := r.SelectBackend(req)
+	sel, err := r.SelectBackend(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Name != "b-health" {
-		t.Fatalf("query should match first: %s", b.Name)
+	if sel.Backend.Name != "b-health" {
+		t.Fatalf("query should match first: %s", sel.Backend.Name)
 	}
 }
 

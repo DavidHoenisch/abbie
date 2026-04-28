@@ -45,13 +45,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	backend, err := s.Router.SelectBackend(r)
+	sel, err := s.Router.SelectBackend(r)
 	if err != nil {
 		log.Printf("Error selecting backend: %v", err)
 		http.Error(w, "No backends available", http.StatusServiceUnavailable)
 		return
 	}
+	if sel.StickyRoundRobinCookie != nil {
+		http.SetCookie(w, sel.StickyRoundRobinCookie)
+		log.Printf("Set sticky round-robin cookie %s=%s", sel.StickyRoundRobinCookie.Name, sel.StickyRoundRobinCookie.Value)
+	}
 
+	backend := sel.Backend
 	p, ok := s.Proxies[backend.Name]
 	if !ok {
 		log.Printf("Proxy not found for backend: %s", backend.Name)

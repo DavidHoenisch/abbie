@@ -163,3 +163,18 @@ routing:
 		t.Fatal("expected error for unknown round-robin target")
 	}
 }
+
+func TestValidate_rejectsStickyCookieOnNonRoundRobin(t *testing.T) {
+	err := Validate(&Config{
+		Backends: []Backend{{Name: "a", Host: "h", Port: 1}},
+		Routing: RoutingList{{
+			Strategy:     QueryParam,
+			ParamName:    "x",
+			DefaultGroup: "a",
+			StickyCookie: "nope",
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected error for sticky_cookie on query-param")
+	}
+}

@@ -2,10 +2,14 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/DavidHoenisch/abbie/internal/config"
 	"github.com/redis/go-redis/v9"
@@ -28,6 +32,13 @@ func NewRoundRobin(cfg *config.Config) (RoundRobin, error) {
 		return nil, err
 	}
 	client := redis.NewClient(opts)
+	pingCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.Ping(pingCtx).Err(); err != nil {
+		log.Printf("redis: PING failed: %v — INCR will fall back to in-process memory until Redis works. "+
+			"Hints: use rediss:// if the provider requires TLS; ensure the URL is the Redis protocol endpoint (not HTTP); "+
+			"on Fly.io verify the app can reach the instance (private network / correct region).", err)
+	}
 	return &redisRR{
 		client:    client,
 		keyPrefix: rs.KeyPrefix,
@@ -80,8 +91,18 @@ func (r *redisRR) NextPool(ordered []string) (int, error) {
 	subkey := r.keyPrefix + "pool/" + PoolKey(ordered)
 	val, err := r.client.Incr(ctx, subkey).Result()
 	if err != nil {
-		log.Printf("redis INCR fallback to in-memory: %v", err)
+		log.Printf("redis INCR fallback to in-memory: %v%s", err, redisConnErrHint(err))
 		return r.fall.NextPool(ordered)
 	}
 	return int((val - 1) % int64(n)), nil
+}
+
+func redisConnErrHint(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, io.EOF) || strings.Contains(err.Error(), "EOF") {
+		return " (EOF: often stale idle connection or TLS mismatch — try rediss://; check provider networking)"
+	}
+	return ""
 }

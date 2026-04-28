@@ -38,6 +38,10 @@ routing:
     # targets:
     #   - defense-backend
     #   - healthcare-backend
+    # Sticky per browser: first request uses round-robin; same client keeps the backend
+    # until the cookie expires (then round-robin assigns again).
+    # sticky_cookie: abbie_rr_backend
+    # sticky_max_age: 3600
 
 # Optional: share round-robin progression across restarts and multiple Abbie instances.
 # Connection URI (redis://...) must come from process env—not from this file—see url_env:

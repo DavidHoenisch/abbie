@@ -8,6 +8,13 @@ import (
 	"github.com/DavidHoenisch/abbie/internal/state"
 )
 
+// Selection is the outcome of routing a single request.
+type Selection struct {
+	Backend *config.Backend
+	// StickyRoundRobinCookie is non-nil when round-robin used sticky_cookie; the server should SetCookie.
+	StickyRoundRobinCookie *http.Cookie
+}
+
 // Router handles request routing based on configuration (ordered routing rules).
 type Router struct {
 	config *config.Config
@@ -25,7 +32,7 @@ func NewRouter(cfg *config.Config) (*Router, error) {
 }
 
 // SelectBackend evaluates routing rules in config order until one selects a backend.
-func (r *Router) SelectBackend(req *http.Request) (*config.Backend, error) {
+func (r *Router) SelectBackend(req *http.Request) (*Selection, error) {
 	if len(r.config.Backends) == 0 {
 		return nil, fmt.Errorf("no backends configured")
 	}
@@ -37,26 +44,48 @@ func (r *Router) SelectBackend(req *http.Request) (*config.Backend, error) {
 	last := len(rules) - 1
 	for i := range rules {
 		isLast := i == last
-		b, skip, err := r.applyRule(&rules[i], req, isLast)
+		sel, skip, err := r.applyRule(&rules[i], req, isLast)
 		if err != nil {
 			return nil, err
 		}
 		if skip {
 			continue
 		}
-		if b != nil {
-			return b, nil
+		if sel != nil && sel.Backend != nil {
+			return sel, nil
 		}
 	}
 	return nil, fmt.Errorf("no backend selected")
 }
 
-func (r *Router) applyRule(rule *config.RoutingRule, req *http.Request, isLast bool) (backend *config.Backend, tryNextRule bool, err error) {
+func (r *Router) applyRule(rule *config.RoutingRule, req *http.Request, isLast bool) (sel *Selection, tryNextRule bool, err error) {
 	switch rule.Strategy {
 	case config.RoundRobin:
 		names, err := r.roundRobinOrderedNames(rule)
 		if err != nil {
 			return nil, false, err
+		}
+		if rule.StickyCookie != "" {
+			if ck, cerr := req.Cookie(rule.StickyCookie); cerr == nil && ck.Value != "" {
+				if b := r.backendInPool(ck.Value, names); b != nil {
+					return &Selection{
+						Backend:                b,
+						StickyRoundRobinCookie: r.stickyRoundRobinCookie(rule, b.Name),
+					}, false, nil
+				}
+			}
+			idx, err := r.rr.NextPool(names)
+			if err != nil {
+				return nil, false, err
+			}
+			b := r.backendByName(names[idx])
+			if b == nil {
+				return nil, false, fmt.Errorf("round-robin: no backend %q", names[idx])
+			}
+			return &Selection{
+				Backend:                b,
+				StickyRoundRobinCookie: r.stickyRoundRobinCookie(rule, b.Name),
+			}, false, nil
 		}
 		idx, err := r.rr.NextPool(names)
 		if err != nil {
@@ -66,10 +95,10 @@ func (r *Router) applyRule(rule *config.RoutingRule, req *http.Request, isLast b
 		if b == nil {
 			return nil, false, fmt.Errorf("round-robin: no backend %q", names[idx])
 		}
-		return b, false, nil
+		return &Selection{Backend: b}, false, nil
 
 	case config.Static:
-		return &r.config.Backends[0], false, nil
+		return &Selection{Backend: &r.config.Backends[0]}, false, nil
 
 	case config.QueryParam:
 		v := req.URL.Query().Get(rule.ParamName)
@@ -80,35 +109,59 @@ func (r *Router) applyRule(rule *config.RoutingRule, req *http.Request, isLast b
 		}
 		if v == "" {
 			if isLast {
-				return r.getDefaultBackend(rule), false, nil
+				return &Selection{Backend: r.getDefaultBackend(rule)}, false, nil
 			}
 			return nil, true, nil
 		}
-		return r.findBackendByGroup(v, rule), false, nil
+		return &Selection{Backend: r.findBackendByGroup(v, rule)}, false, nil
 
 	case config.Header:
 		v := req.Header.Get(rule.ParamName)
 		if v == "" {
 			if isLast {
-				return r.getDefaultBackend(rule), false, nil
+				return &Selection{Backend: r.getDefaultBackend(rule)}, false, nil
 			}
 			return nil, true, nil
 		}
-		return r.findBackendByGroup(v, rule), false, nil
+		return &Selection{Backend: r.findBackendByGroup(v, rule)}, false, nil
 
 	case config.Cookie:
 		ck, cerr := req.Cookie(rule.ParamName)
 		if cerr != nil || ck.Value == "" {
 			if isLast {
-				return r.getDefaultBackend(rule), false, nil
+				return &Selection{Backend: r.getDefaultBackend(rule)}, false, nil
 			}
 			return nil, true, nil
 		}
-		return r.findBackendByGroup(ck.Value, rule), false, nil
+		return &Selection{Backend: r.findBackendByGroup(ck.Value, rule)}, false, nil
 
 	default:
 		return nil, false, fmt.Errorf("unknown routing strategy: %s", rule.Strategy)
 	}
+}
+
+func (r *Router) stickyRoundRobinCookie(rule *config.RoutingRule, backendName string) *http.Cookie {
+	maxAge := rule.StickyMaxAge
+	if maxAge <= 0 {
+		maxAge = 3600
+	}
+	return &http.Cookie{
+		Name:     rule.StickyCookie,
+		Value:    backendName,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	}
+}
+
+func (r *Router) backendInPool(name string, pool []string) *config.Backend {
+	for _, n := range pool {
+		if n == name {
+			return r.backendByName(name)
+		}
+	}
+	return nil
 }
 
 func (r *Router) findBackendByGroup(group string, rule *config.RoutingRule) *config.Backend {

@@ -29,11 +29,16 @@ type Backend struct {
 // RoutingRule defines how to route requests for one step in the ordered routing chain.
 // For round-robin, Targets lists backend names eligible for that hop (order defines
 // rotation). If Targets is empty, all backends participate.
+//
+// When StickyCookie is set (round-robin only), the first assignment uses the shared
+// round-robin counter; later requests reuse the same backend until the cookie expires.
 type RoutingRule struct {
 	Strategy     RoutingStrategy `yaml:"strategy"`
 	ParamName    string          `yaml:"param_name"`
 	DefaultGroup string          `yaml:"default_group"`
 	Targets      []string        `yaml:"targets"` // backend names for round-robin only
+	StickyCookie string          `yaml:"sticky_cookie"`
+	StickyMaxAge int             `yaml:"sticky_max_age"` // seconds; default 3600 if sticky_cookie set
 }
 
 // App contains application-level settings

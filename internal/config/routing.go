@@ -53,6 +53,9 @@ func validateRouting(cfg *Config) error {
 		default:
 			return fmt.Errorf("routing[%d]: unknown strategy %q", i, rule.Strategy)
 		}
+		if rule.StickyCookie != "" && rule.Strategy != RoundRobin {
+			return fmt.Errorf("routing[%d]: sticky_cookie is only valid for round-robin", i)
+		}
 		if rule.Strategy != RoundRobin {
 			continue
 		}

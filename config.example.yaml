@@ -44,6 +44,10 @@ routing:
 #     targets:
 #       - defense-backend
 #       - healthcare-backend
+#     # Optional: pin each browser to one backend until the cookie expires (first hit
+#     # still uses the shared round-robin counter; later requests reuse the cookie).
+#     # sticky_cookie: abbie_rr_backend
+#     # sticky_max_age: 3600   # seconds; defaults to 3600 if omitted
 #
 # Optional shared state for round-robin (survives restarts; shared across instances).
 # Put the redis:// or rediss:// URI in env (never in YAML)—url_env names which variable:
@@ -51,6 +55,8 @@ routing:
 #   redis:
 #     url_env: REDIS_URL
 #     key_prefix: "abbie:rr:"
+# If logs show "redis INCR fallback" / EOF: use rediss:// (TLS) when the host requires
+# it (e.g. Upstash); ensure REDIS_URL is the Redis wire URL, not an HTTP REST URL.
 
 # ==============================================================================
 # Example 2: Round-Robin Load Balancing

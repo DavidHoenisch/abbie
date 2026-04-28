@@ -33,10 +33,13 @@ func redisOptsFrom(rs *config.RedisState) (*redis.Options, error) {
 }
 
 func applyRedisTimeouts(opts *redis.Options) {
-	opts.DialTimeout = 3 * time.Second
-	opts.ReadTimeout = 3 * time.Second
-	opts.WriteTimeout = 3 * time.Second
-	opts.MaxRetries = 1
-	opts.MinRetryBackoff = 50 * time.Millisecond
-	opts.MaxRetryBackoff = time.Second
+	// Managed Redis often closes idle TCP connections; recycling pool conns avoids EOF on reuse.
+	opts.ConnMaxIdleTime = 30 * time.Second
+	opts.DialTimeout = 5 * time.Second
+	opts.ReadTimeout = 5 * time.Second
+	opts.WriteTimeout = 5 * time.Second
+	// Transient EOF / connection reset after idle is common; allow a few retries with backoff.
+	opts.MaxRetries = 5
+	opts.MinRetryBackoff = 100 * time.Millisecond
+	opts.MaxRetryBackoff = 2 * time.Second
 }
