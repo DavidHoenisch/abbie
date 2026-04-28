@@ -33,6 +33,25 @@ routing:
 # http://localhost:8080/?audience=healthcare -> healthcare-backend
 # http://localhost:8080/                     -> defense-backend (default)
 
+# Ordered strategies (query param first, round-robin when no match on earlier rules).
+# For round-robin, optional `targets` lists backend names eligible for rotation
+# (order matters). Omit targets to use all backends.
+# routing:
+#   - strategy: query-param
+#     param_name: audience
+#     default_group: defense
+#   - strategy: round-robin
+#     targets:
+#       - defense-backend
+#       - healthcare-backend
+#
+# Optional shared state for round-robin (survives restarts; shared across instances).
+# Put the redis:// or rediss:// URI in env (never in YAML)—url_env names which variable:
+# state:
+#   redis:
+#     url_env: REDIS_URL
+#     key_prefix: "abbie:rr:"
+
 # ==============================================================================
 # Example 2: Round-Robin Load Balancing
 # Distributes requests evenly across all backends

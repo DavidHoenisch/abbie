@@ -11,26 +11,29 @@ import (
 type RoutingStrategy string
 
 const (
-	RoundRobin  RoutingStrategy = "round-robin"
-	QueryParam  RoutingStrategy = "query-param"
-	Header      RoutingStrategy = "header"
-	Cookie      RoutingStrategy = "cookie"
-	Static      RoutingStrategy = "static"
+	RoundRobin RoutingStrategy = "round-robin"
+	QueryParam RoutingStrategy = "query-param"
+	Header     RoutingStrategy = "header"
+	Cookie     RoutingStrategy = "cookie"
+	Static     RoutingStrategy = "static"
 )
 
 // Backend represents a single backend service
 type Backend struct {
-	Name     string   `yaml:"name"`
-	Host     string   `yaml:"host"`
-	Port     int      `yaml:"port"`
-	Groups   []string `yaml:"groups"`   // e.g., ["defense", "healthcare"]
+	Name   string   `yaml:"name"`
+	Host   string   `yaml:"host"`
+	Port   int      `yaml:"port"`
+	Groups []string `yaml:"groups"`
 }
 
-// RoutingRule defines how to route requests
+// RoutingRule defines how to route requests for one step in the ordered routing chain.
+// For round-robin, Targets lists backend names eligible for that hop (order defines
+// rotation). If Targets is empty, all backends participate.
 type RoutingRule struct {
 	Strategy     RoutingStrategy `yaml:"strategy"`
-	ParamName    string          `yaml:"param_name"`    // for query-param, header, or cookie strategies
-	DefaultGroup string          `yaml:"default_group"` // fallback when no match
+	ParamName    string          `yaml:"param_name"`
+	DefaultGroup string          `yaml:"default_group"`
+	Targets      []string        `yaml:"targets"` // backend names for round-robin only
 }
 
 // App contains application-level settings
@@ -40,50 +43,58 @@ type App struct {
 
 // Config is the root configuration structure
 type Config struct {
-	App      App           `yaml:"app"`
-	Backends []Backend     `yaml:"backends"`
-	Routing  RoutingRule   `yaml:"routing"`
+	App      App         `yaml:"app"`
+	Backends []Backend   `yaml:"backends"`
+	Routing  RoutingList `yaml:"routing"`
+	State    State       `yaml:"state"`
 }
 
-// NewConfigFactory loads configuration from a YAML file or environment variables
-func NewConfigFactory() (*Config, error) {
-	configPath := os.Getenv("ABBIE_CONFIG")
-	if configPath == "" {
-		configPath = "config.yaml"
-	}
-
-	// Load from file system
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
-	}
-
-	var config Config
-	if err := yaml.Unmarshal(data, &config); err != nil {
+// Parse unmarshals YAML into Config, applies defaults, and validates.
+func Parse(data []byte) (*Config, error) {
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
-
-	// Override with environment variables if set
-	if port := os.Getenv("ABBIE_PORT"); port != "" {
-		config.App.Port = port
+	applyDefaults(&cfg)
+	if err := Validate(&cfg); err != nil {
+		return nil, err
 	}
-
-	// Set defaults
-	if config.App.Port == "" {
-		config.App.Port = "8080"
-	}
-
-	// Validate configuration
-	if len(config.Backends) == 0 {
-		return nil, fmt.Errorf("no backends configured")
-	}
-
-	return &config, nil
+	return &cfg, nil
 }
 
-func getEnvOrDefault(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
+// Load reads configuration from ABBIE_CONFIG (default config.yaml), applies env overrides.
+func Load() (*Config, error) {
+	path := os.Getenv("ABBIE_CONFIG")
+	if path == "" {
+		path = "config.yaml"
 	}
-	return defaultValue
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file %s: %w", path, err)
+	}
+	cfg, err := Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	if port := os.Getenv("ABBIE_PORT"); port != "" {
+		cfg.App.Port = port
+	}
+	return cfg, nil
+}
+
+func applyDefaults(cfg *Config) {
+	if cfg.App.Port == "" {
+		cfg.App.Port = "8080"
+	}
+	if cfg.State.Redis.KeyPrefix == "" {
+		cfg.State.Redis.KeyPrefix = "abbie:rr:"
+	}
+}
+
+// Validate returns an error if the configuration is unusable.
+func Validate(cfg *Config) error {
+	if len(cfg.Backends) == 0 {
+		return fmt.Errorf("no backends configured")
+	}
+	return validateRouting(cfg)
 }

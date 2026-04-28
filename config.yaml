@@ -1,5 +1,7 @@
 # Abbie Configuration File
-# This is the main configuration for the Abbie reverse proxy
+# Routing is an ordered list: each request is evaluated top to bottom; the first rule
+# that can select a backend wins. Use a list to combine strategies (e.g. query param
+# first, then round-robin for everyone else).
 
 app:
   port: "8080"
@@ -26,15 +28,24 @@ backends:
     groups:
       - default
 
-# Routing configuration
 routing:
-  # Strategy options: round-robin, query-param, header, cookie, static
-  strategy: query-param
+  # Match ?audience=... (or cookie) to a group first; if missing, fall through to round-robin.
+  - strategy: query-param
+    param_name: audience
+    default_group: default
+  - strategy: round-robin
+    # Optional: only these backends participate in rotation (names must match `backends:`).
+    # targets:
+    #   - defense-backend
+    #   - healthcare-backend
 
-  # For query-param strategy: the query parameter name to check
-  # For header strategy: the header name to check
-  # For cookie strategy: the cookie name to check
-  param_name: audience
-
-  # Default group to route to when no match is found
-  default_group: default
+# Optional: share round-robin progression across restarts and multiple Abbie instances.
+# Connection URI (redis://...) must come from process env—not from this file—see url_env:
+# state:
+#   redis:
+#     url_env: REDIS_URL
+#     key_prefix: "abbie:rr:"
+# Or use addr/password/db in config (no secrets in YAML if avoid password field):
+#   redis:
+#     addr: "localhost:6379"
+#     db: 0
