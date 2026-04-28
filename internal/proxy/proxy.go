@@ -1,11 +1,25 @@
 package proxy
 
 import (
+	"context"
+	"errors"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"sync/atomic"
+	"syscall"
 )
+
+type proxyRetryKey struct{}
+
+// ContextWithProxyRetry attaches a marker to ctx. When the reverse proxy hits a
+// retryable transport error, ErrorHandler sets *retry to true and does not write
+// a response so the caller can try another backend.
+func ContextWithProxyRetry(ctx context.Context, retry *atomic.Bool) context.Context {
+	return context.WithValue(ctx, proxyRetryKey{}, retry)
+}
 
 // New builds a reverse proxy for target with audience-specific headers and response tuning.
 func New(target string, backendName string) (*httputil.ReverseProxy, error) {
@@ -47,12 +61,46 @@ func New(target string, backendName string) (*httputil.ReverseProxy, error) {
 	}
 
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		if ab, ok := r.Context().Value(proxyRetryKey{}).(*atomic.Bool); ok && isRetryableProxyError(err) {
+			ab.Store(true)
+			return
+		}
 		log.Printf("Proxy error for %s: %v", u.String(), err)
 		w.WriteHeader(http.StatusBadGateway)
 		_, _ = w.Write([]byte("Backend service unavailable"))
 	}
 
 	return proxy, nil
+}
+
+func isRetryableProxyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		if opErr.Timeout() {
+			return true
+		}
+		if opErr.Op == "dial" {
+			return true
+		}
+		var errno syscall.Errno
+		if errors.As(opErr.Err, &errno) {
+			switch errno {
+			case syscall.ECONNREFUSED, syscall.ECONNRESET, syscall.EPIPE, syscall.ETIMEDOUT:
+				return true
+			}
+		}
+	}
+	var ue *url.Error
+	if errors.As(err, &ue) && ue.Timeout() {
+		return true
+	}
+	return false
 }
 
 // ApplyCacheAndVaryHeaders sets cache-control for HTML-like responses and Vary for asset responses.

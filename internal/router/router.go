@@ -13,6 +13,9 @@ type Selection struct {
 	Backend *config.Backend
 	// StickyRoundRobinCookie is non-nil when round-robin used sticky_cookie; the server should SetCookie.
 	StickyRoundRobinCookie *http.Cookie
+	// RoundRobinPool is the ordered round-robin pool for this hop (copy of targets or all backends).
+	// When non-empty, the server may try the next backend on proxy transport failure.
+	RoundRobinPool []string
 }
 
 // Router handles request routing based on configuration (ordered routing rules).
@@ -65,12 +68,14 @@ func (r *Router) applyRule(rule *config.RoutingRule, req *http.Request, isLast b
 		if err != nil {
 			return nil, false, err
 		}
+		pool := append([]string(nil), names...)
 		if rule.StickyCookie != "" {
 			if ck, cerr := req.Cookie(rule.StickyCookie); cerr == nil && ck.Value != "" {
 				if b := r.backendInPool(ck.Value, names); b != nil {
 					return &Selection{
 						Backend:                b,
 						StickyRoundRobinCookie: r.stickyRoundRobinCookie(rule, b.Name),
+						RoundRobinPool:         pool,
 					}, false, nil
 				}
 			}
@@ -85,6 +90,7 @@ func (r *Router) applyRule(rule *config.RoutingRule, req *http.Request, isLast b
 			return &Selection{
 				Backend:                b,
 				StickyRoundRobinCookie: r.stickyRoundRobinCookie(rule, b.Name),
+				RoundRobinPool:         pool,
 			}, false, nil
 		}
 		idx, err := r.rr.NextPool(names)
@@ -95,7 +101,7 @@ func (r *Router) applyRule(rule *config.RoutingRule, req *http.Request, isLast b
 		if b == nil {
 			return nil, false, fmt.Errorf("round-robin: no backend %q", names[idx])
 		}
-		return &Selection{Backend: b}, false, nil
+		return &Selection{Backend: b, RoundRobinPool: pool}, false, nil
 
 	case config.Static:
 		return &Selection{Backend: &r.config.Backends[0]}, false, nil

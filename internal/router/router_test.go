@@ -105,6 +105,9 @@ func TestSelectBackend_roundRobin(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if len(sel.RoundRobinPool) != 2 || sel.RoundRobinPool[0] != "b-def" || sel.RoundRobinPool[1] != "b-health" {
+			t.Fatalf("RoundRobinPool: %+v", sel.RoundRobinPool)
+		}
 		seen[sel.Backend.Name]++
 	}
 	if seen["b-def"] == 0 || seen["b-health"] == 0 {

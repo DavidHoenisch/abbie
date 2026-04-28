@@ -4,8 +4,10 @@ import (
 	"log"
 	"net/http"
 	"net/http/httputil"
+	"sync/atomic"
 
 	"github.com/DavidHoenisch/abbie/internal/config"
+	"github.com/DavidHoenisch/abbie/internal/proxy"
 	"github.com/DavidHoenisch/abbie/internal/router"
 )
 
@@ -51,6 +53,23 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No backends available", http.StatusServiceUnavailable)
 		return
 	}
+
+	if len(sel.RoundRobinPool) > 0 {
+		served, ok := s.serveRoundRobinWithFallback(w, r, sel)
+		if !ok {
+			log.Printf("Round-robin: all backends in pool failed for request %s %s", r.Method, r.URL.Path)
+			http.Error(w, "Backend service unavailable", http.StatusBadGateway)
+			return
+		}
+		if sel.StickyRoundRobinCookie != nil {
+			ck := *sel.StickyRoundRobinCookie
+			ck.Value = served
+			http.SetCookie(w, &ck)
+			log.Printf("Set sticky round-robin cookie %s=%s", ck.Name, ck.Value)
+		}
+		return
+	}
+
 	if sel.StickyRoundRobinCookie != nil {
 		http.SetCookie(w, sel.StickyRoundRobinCookie)
 		log.Printf("Set sticky round-robin cookie %s=%s", sel.StickyRoundRobinCookie.Name, sel.StickyRoundRobinCookie.Value)
@@ -66,4 +85,37 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Routing request to backend: %s", backend.Name)
 	p.ServeHTTP(w, r)
+}
+
+func (s *Server) serveRoundRobinWithFallback(w http.ResponseWriter, r *http.Request, sel *router.Selection) (servedBackend string, ok bool) {
+	pool := sel.RoundRobinPool
+	start := sel.Backend.Name
+	startIdx := 0
+	for i, name := range pool {
+		if name == start {
+			startIdx = i
+			break
+		}
+	}
+
+	for i := 0; i < len(pool); i++ {
+		name := pool[(startIdx+i)%len(pool)]
+		p, found := s.Proxies[name]
+		if !found {
+			log.Printf("Round-robin fallback: no proxy for backend %q", name)
+			continue
+		}
+
+		var retry atomic.Bool
+		ctx := proxy.ContextWithProxyRetry(r.Context(), &retry)
+		r2 := r.Clone(ctx)
+		log.Printf("Routing request to backend: %s", name)
+		p.ServeHTTP(w, r2)
+		if retry.Load() {
+			log.Printf("Round-robin fallback: backend %s unavailable, trying next", name)
+			continue
+		}
+		return name, true
+	}
+	return "", false
 }

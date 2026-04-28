@@ -35,7 +35,9 @@ routing:
 
 # Ordered strategies (query param first, round-robin when no match on earlier rules).
 # For round-robin, optional `targets` lists backend names eligible for rotation
-# (order matters). Omit targets to use all backends.
+# (order matters). Omit targets to use all backends. If the chosen host cannot be
+# reached (connection refused, dial timeout, etc.), Abbie tries the next backend
+# in that pool for the same request.
 # routing:
 #   - strategy: query-param
 #     param_name: audience
